@@ -6,7 +6,6 @@ import pickle
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 
 # 延迟导入 ddddocr，避免启动时出错
 # import ddddocr
@@ -118,32 +117,18 @@ def login(driver=None, return_driver=False):
         should_close_driver = not return_driver
         print("正在初始化浏览器...")
         try:
-            # 初始化浏览器
+            # 使用系统安装的 chromedriver
+            service = Service('/usr/local/bin/chromedriver')
             options = webdriver.ChromeOptions()
-            # 无头模式，不显示浏览器窗口
             options.add_argument("--headless")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--window-size=1920,1080")  # 设置窗口大小
-
-            # 尝试直接初始化 Chrome 驱动
-            try:
-                driver = webdriver.Chrome(options=options)
-                print("浏览器初始化成功！")
-            except Exception as e1:
-                print(f"警告: 直接初始化 Chrome 驱动失败: {e1}")
-                print("正在尝试使用 webdriver_manager...")
-                # 设置 webdriver_manager 的缓存目录
-                os.environ["WDM_LOCAL"] = "1"
-                os.environ["WDM_CACHE"] = "/tmp/.wdm"
-                # 使用 webdriver_manager 自动管理驱动
-                from webdriver_manager.chrome import ChromeDriverManager
-
-                service = Service(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=options)
-                print("浏览器初始化成功！")
+            options.add_argument("--window-size=1920,1080")
+            
+            driver = webdriver.Chrome(service=service, options=options)
+            print("浏览器初始化成功！")
         except Exception as e:
-            print(f"错误: 初始化浏览器失败: {e}")
+            print(f"错误：初始化浏览器失败：{e}")
             if return_driver:
                 return False, None
             return False
@@ -1273,13 +1258,13 @@ def shenpi():
 
             # 尝试查找所有可能的审批项
             try:
-                # 1. 首先尝试查找所有包含审批信息的元素
-                print("1. 尝试查找包含审批信息的元素...")
+                # 1. 首先查找业务审批方框内的 li 列表项（快普系统标准结构）
+                print("1. 尝试查找业务审批列表项...")
                 items = driver.find_elements(
                     By.XPATH,
-                    "//*[contains(@class, 'item') or contains(@class, 'list') or contains(@class, 'row') or contains(@class, '审批') or contains(@class, 'business') or contains(@class, 'workflow')]",
+                    "//div[contains(@class, 'content-panel')]//ul/li[@id and @noteid]",
                 )
-                print(f"找到 {len(items)} 个可能的审批项")
+                print(f"找到 {len(items)} 个审批项")
 
                 if items:
                     print("\n业务审批列表:")
@@ -1288,56 +1273,45 @@ def shenpi():
                     data_found = False
                     for i, item in enumerate(items, 1):
                         try:
-                            # 提取主题
+                            # 从 onclick 属性中提取主题信息
+                            onclick = item.get_attribute("onclick") or ""
                             subject = ""
-                            try:
-                                # 尝试多种方式查找主题元素
-                                subject_elem = item.find_element(
-                                    By.XPATH,
-                                    ".//*[contains(@class, 'subject') or contains(@class, 'title') or contains(@class, 'theme') or starts-with(name(), 'h') or contains(@class, 'name')]",
-                                )
-                                subject = subject_elem.text.strip()
-                            except Exception as e:
-                                # 尝试获取所有文本
-                                item_text = item.text.strip()
-                                if item_text:
-                                    # 取第一行作为主题
-                                    lines = item_text.split("\n")
-                                    subject = lines[0].strip() if lines else ""
-
-                            # 提取状态
+                            
+                            # 尝试从 onclick 中提取主题
+                            if "ViewDetail" in onclick:
+                                # 提取引号内的内容，可能包含主题
+                                import re
+                                match = re.search(r"'([^']+)'", onclick)
+                                if match:
+                                    url_params = match.group(1)
+                                    # 尝试从 URL 参数中提取主题
+                                    if "BusinessType" in url_params:
+                                        # 这是一个审批项，从 item 的文本中提取
+                                        subject = item.text.strip()
+                                        # 移除可能的图标文本（如"+"）
+                                        if subject in ["+", "-", ""]:
+                                            subject = f"审批项 #{item.get_attribute('noteid')}"
+                            
+                            # 如果还是没有主题，使用 noteid
+                            if not subject:
+                                noteid = item.get_attribute("noteid")
+                                subject = f"审批项 #{noteid}"
+                            
+                            # 提取状态（从办理情况字段）
                             status = ""
-                            try:
-                                # 尝试多种方式查找状态元素
-                                status_elem = item.find_element(
-                                    By.XPATH,
-                                    ".//*[contains(@class, 'status') or contains(@class, 'state') or contains(@class, 'result') or contains(@class, 'status')]",
-                                )
-                                status = status_elem.text.strip()
-                            except Exception as e:
-                                # 尝试从文本中提取
-                                item_text = item.text.strip()
-                                if item_text:
-                                    lines = item_text.split("\n")
-                                    for line in lines[1:]:  # 从第二行开始查找状态
-                                        line = line.strip()
-                                        if (
-                                            "状态" in line
-                                            or "办理" in line
-                                            or "结果" in line
-                                            or "审批" in line
-                                        ):
-                                            status = line
-                                            break
+                            status_span = item.find_element(By.TAG_NAME, "span") if item.find_elements(By.TAG_NAME, "span") else None
+                            if status_span:
+                                status = status_span.text.strip()
 
                             # 只有当主题不为空时才打印
-                            if subject:
-                                print(f"{i}. 主题: {subject}")
-                                print(f"   办理情况: {status}")
+                            if subject and subject not in ["+", "-"]:
+                                print(f"{i}. 主题：{subject}")
+                                if status:
+                                    print(f"   办理情况：{status}")
                                 print("---")
                                 data_found = True
                         except Exception as e:
-                            print(f"提取审批项 {i} 失败: {e}")
+                            print(f"提取审批项 {i} 失败：{e}")
 
                         # 只显示前 10 条
                         if i >= 10:

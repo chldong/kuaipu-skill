@@ -1,7 +1,7 @@
 ---
 name: kuaipu-skill
 description: 自动化快普系统登录、验证码识别、自动操作和审批流程查询等。
-version: 0.2
+version: 0.3
 author: 崔海亮
 license: MIT
 tags:
